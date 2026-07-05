@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
-import { useAuth } from "@/contexts/auth-context";
 import { formatDate } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ClipboardCheck, Clock, CheckCircle2, Search, Filter, ChevronRight, Calendar, User, Wrench } from "lucide-react";
@@ -31,39 +29,42 @@ export default function ChecklistHistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "in_progress" | "completed">("all");
-  const { user, isLoading: authLoading } = useAuth();
-  const supabase = createClient();
 
+  // Fetch via a server route instead of the browser Supabase client. The
+  // browser client depended on the auth session being ready (up to an 8s
+  // ceiling) and could stall on session locks, which made this page appear to
+  // hang until a manual refresh. The server route resolves the user from the
+  // session cookie and is reliably fast.
   const fetchData = useCallback(async () => {
-    if (!user) return;
     setIsLoading(true);
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch("/api/my-checklists", {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-    // Fetch runs for current user
-    const { data: runData, error: runError } = await supabase
-      .from("checklist_runs")
-      .select(`
-        *,
-        checklist_templates (name),
-        machines (name),
-        users!checklist_runs_user_id_fkey (name)
-      `)
-      .eq("user_id", user.id)
-      .order("started_at", { ascending: false })
-      .limit(50);
+      if (!res.ok) {
+        console.error("[Checklists] Error fetching runs:", res.status);
+        setRuns([]);
+        return;
+      }
 
-    if (runError) {
-      console.error("[Checklists] Error fetching runs:", runError);
+      const { runs: runData } = await res.json();
+      setRuns(runData || []);
+    } catch (err) {
+      console.error("[Checklists] Error fetching runs:", err);
+      setRuns([]);
+    } finally {
+      setIsLoading(false);
     }
-
-    setRuns(runData || []);
-    setIsLoading(false);
-  }, [supabase, user]);
+  }, []);
 
   useEffect(() => {
-    if (!authLoading && user) {
-      fetchData();
-    }
-  }, [authLoading, user, fetchData]);
+    fetchData();
+  }, [fetchData]);
 
   // Filter runs
   const filteredRuns = runs.filter((r) => {
