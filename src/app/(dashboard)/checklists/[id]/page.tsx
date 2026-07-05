@@ -28,6 +28,7 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
   const [answers, setAnswers] = useState<ChecklistAnswer[]>([]);
   const [operator, setOperator] = useState<{ name: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -76,8 +77,9 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
     return answers.find((a) => a.item_id === itemId);
   };
 
-  const handleExportPDF = () => {
-    if (!run || !template) return;
+  const handleExportPDF = async () => {
+    if (!run || !template || isExporting) return;
+    setIsExporting(true);
 
     const esc = (v: unknown) =>
       String(v ?? "")
@@ -191,16 +193,73 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
 </body>
 </html>`;
 
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) {
-      alert("Please allow pop-ups for this site to export the PDF.");
+    // Render the report inside an isolated, off-screen iframe so the app's
+    // global Tailwind styles (which use oklch colours html2canvas can't parse)
+    // never touch it, then rasterise that clean document into a real PDF file.
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "-10000px";
+    iframe.style.top = "0";
+    iframe.style.width = "800px";
+    iframe.style.height = "1131px";
+    iframe.setAttribute("aria-hidden", "true");
+    document.body.appendChild(iframe);
+
+    const cleanup = () => {
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+      setIsExporting(false);
+    };
+
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      cleanup();
+      alert("Sorry, the PDF couldn't be generated. Please try again.");
       return;
     }
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-    // Give images/layout a moment before invoking the print dialog.
-    setTimeout(() => printWindow.print(), 400);
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    const safeName = `${template.name} - ${machine?.name || "checklist"}`
+      .replace(/[^a-z0-9\-_ ]/gi, "")
+      .trim()
+      .replace(/\s+/g, "-");
+    const filename = `${safeName || "checklist"}-${run.id.slice(0, 8)}.pdf`;
+
+    const waitForImages = async () => {
+      const imgs = Array.from(doc.images || []);
+      await Promise.all(
+        imgs.map((img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+              })
+        )
+      );
+    };
+
+    try {
+      await waitForImages();
+      const { default: html2pdf } = await import("html2pdf.js");
+      await html2pdf()
+        .set({
+          margin: [10, 10, 12, 10],
+          filename,
+          image: { type: "jpeg", quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"], avoid: ".section" },
+        })
+        .from(doc.body)
+        .save();
+    } catch (err) {
+      console.error("[ChecklistDetail] PDF export failed:", err);
+      alert("Sorry, the PDF couldn't be generated. Please try again.");
+    } finally {
+      cleanup();
+    }
   };
 
   if (isLoading) {
@@ -380,11 +439,11 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: '12px' }}>
-        <button onClick={handleExportPDF} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', color: '#374151', fontWeight: '500', cursor: 'pointer' }}>
+        <button onClick={handleExportPDF} disabled={isExporting} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', color: '#374151', fontWeight: '500', cursor: isExporting ? 'wait' : 'pointer', opacity: isExporting ? 0.6 : 1 }}>
           <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          Export PDF
+          {isExporting ? "Generating PDF…" : "Export PDF"}
         </button>
         {run.status === "in_progress" && (
           <Link href={`/checklists/${run.id}/run`} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '12px', background: '#0057A8', color: 'white', borderRadius: '8px', fontWeight: '500' }}>
