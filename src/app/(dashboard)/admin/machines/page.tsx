@@ -55,7 +55,7 @@ interface MachineWithWorkCentre extends Machine {
 }
 
 export default function AdminMachinesPage() {
-  const { hasRole } = useAuth();
+  const { hasRole, isLoading: authLoading } = useAuth();
   const [machines, setMachines] = useState<MachineWithWorkCentre[]>([]);
   const [workCentres, setWorkCentres] = useState<WorkCentre[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -185,6 +185,12 @@ export default function AdminMachinesPage() {
   const filteredMachines = filterWorkCentre
     ? machines.filter((m) => m.work_centre_id === filterWorkCentre)
     : machines;
+
+  if (authLoading) {
+    return (
+      <div style={{ padding: "40px", textAlign: "center", color: "#6b7280" }}>Loading...</div>
+    );
+  }
 
   if (!isAdmin) {
     return (

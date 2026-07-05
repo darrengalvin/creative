@@ -40,7 +40,7 @@ interface WorkCentreWithCount extends WorkCentre {
 }
 
 export default function AdminWorkCentresPage() {
-  const { hasRole } = useAuth();
+  const { hasRole, isLoading: authLoading } = useAuth();
   const [workCentres, setWorkCentres] = useState<WorkCentreWithCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -128,6 +128,12 @@ export default function AdminWorkCentresPage() {
     setFormData({ name: wc.name, description: wc.description || "" });
     setShowModal(true);
   };
+
+  if (authLoading) {
+    return (
+      <div style={{ padding: "40px", textAlign: "center", color: "#6b7280" }}>Loading...</div>
+    );
+  }
 
   if (!isAdmin) {
     return (

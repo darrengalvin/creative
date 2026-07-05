@@ -63,7 +63,7 @@ const buttonStyle: React.CSSProperties = {
 };
 
 export default function AdminUsersPage() {
-  const { user: currentUser, hasRole, viewAsUser, isImpersonating } = useAuth();
+  const { user: currentUser, hasRole, viewAsUser, isImpersonating, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -236,6 +236,12 @@ export default function AdminUsersPage() {
     }
     setFormData({ ...formData, password });
   };
+
+  if (authLoading) {
+    return (
+      <div style={{ padding: "40px", textAlign: "center", color: "#6b7280" }}>Loading...</div>
+    );
+  }
 
   if (!isAdmin) {
     return (
