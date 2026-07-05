@@ -2,7 +2,6 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/contexts/auth-context";
 import Link from "next/link";
 import type { ChecklistFrequency } from "@/types/database";
@@ -67,7 +66,6 @@ function NewChecklistContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
-  const supabase = createClient();
 
   const preselectedMachineId = searchParams.get("machineId");
 
@@ -88,26 +86,20 @@ function NewChecklistContent() {
     setIsLoading(true);
     setLoadFailed(false);
 
-    // Guard against a request that never resolves so the page can't hang on the loading skeleton forever
-    const withTimeout = <T,>(promise: PromiseLike<T>, ms = 15000): Promise<T> =>
-      Promise.race([
-        Promise.resolve(promise),
-        new Promise<T>((_, reject) =>
-          setTimeout(() => reject(new Error("Request timed out. Please check your connection and try again.")), ms)
-        ),
-      ]);
-
     try {
-      const [machinesRes, templatesRes] = await Promise.all([
-        withTimeout(supabase.from("machines").select("id, name, manufacturer, model").order("name")),
-        withTimeout(supabase.from("checklist_templates").select("id, name, type, machine_id, frequency").eq("status", "active").order("name")),
-      ]);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch("/api/checklist-start", {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-      if (machinesRes.error) throw machinesRes.error;
-      if (templatesRes.error) throw templatesRes.error;
+      if (!res.ok) throw new Error(`Request failed with status ${res.status}`);
 
-      setMachines(machinesRes.data || []);
-      setTemplates(templatesRes.data || []);
+      const { machines: machineData, templates: templateData } = await res.json();
+      setMachines(machineData || []);
+      setTemplates(templateData || []);
     } catch (err) {
       console.error("Error loading checklist data:", err);
       setLoadFailed(true);
@@ -143,26 +135,38 @@ function NewChecklistContent() {
       const calculatedDueDate = calculateDueDate(template.frequency, now);
       const jobNumber = selectedMachine ? generateJobNumber(selectedMachine.name) : null;
 
-      const { data, error: insertError } = await supabase
-        .from("checklist_runs")
-        .insert({
-          template_id: template.id,
-          machine_id: selectedMachineId,
-          user_id: user.id,
-          status: "in_progress",
-          started_at: now.toISOString(),
-          due_date: calculatedDueDate ? calculatedDueDate.toISOString() : null,
-          job_number: jobNumber,
-        })
-        .select("id")
-        .single();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch("/api/checklist-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        signal: controller.signal,
+        body: JSON.stringify({
+          templateId: template.id,
+          machineId: selectedMachineId,
+          dueDate: calculatedDueDate ? calculatedDueDate.toISOString() : null,
+          jobNumber,
+        }),
+      });
+      clearTimeout(timeoutId);
 
-      if (insertError) throw insertError;
+      if (!res.ok) {
+        let message = "Failed to start checklist";
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) message = errJson.error;
+        } catch {
+          // keep default
+        }
+        throw new Error(message);
+      }
 
-      router.push(`/checklists/${data.id}/run`);
-    } catch (err: any) {
+      const { runId } = await res.json();
+      router.push(`/checklists/${runId}/run`);
+    } catch (err) {
       console.error("Error creating checklist run:", err);
-      setError(err.message || "Failed to start checklist");
+      setError(err instanceof Error ? err.message : "Failed to start checklist");
       setIsSubmitting(null);
     }
   };
