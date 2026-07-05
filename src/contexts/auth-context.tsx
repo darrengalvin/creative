@@ -158,14 +158,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           currentUserIdRef.current = null;
         }
 
+        // Release the UI as soon as we know who the user is. The supabase
+        // session below is loaded in the background - previously it was awaited
+        // here, and because the browser client's getSession() can hang on its
+        // auth lock, that await blocked releasing the UI until the 8s ceiling
+        // on every page load. It must never gate the loading state.
+        if (mounted) setIsLoading(false);
+
         // Independently load the supabase session (for token-refresh tracking
-        // and the .session field consumers expect). Don't block the UI on it.
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (mounted) setSession(session);
-        } catch (sessErr) {
-          console.warn("[Auth] getSession failed (non-fatal):", sessErr);
-        }
+        // and the .session field consumers expect), without blocking the UI.
+        void supabase.auth
+          .getSession()
+          .then(({ data: { session } }) => {
+            if (mounted) setSession(session);
+          })
+          .catch((sessErr) => {
+            console.warn("[Auth] getSession failed (non-fatal):", sessErr);
+          });
       } catch (error) {
         console.error("[Auth] Error initializing auth:", error);
       } finally {
@@ -275,7 +284,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return roleArray.includes(checkUser.role);
   }, [user, isImpersonating, impersonatedUser]);
 
-  const isAuthenticated = useMemo(() => !!session && !!user, [session, user]);
+  // Authentication is determined by having a resolved user profile (from the
+  // reliable server-side /api/me), not the browser session object, which is
+  // loaded in the background and may lag or fail to hydrate.
+  const isAuthenticated = useMemo(() => !!user, [user]);
 
   // Impersonation functions
   const viewAsUser = useCallback((targetUser: User) => {
