@@ -34,10 +34,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Run not found" }, { status: 404 });
     }
 
-    const [templateRes, machineRes, answersRes] = await Promise.all([
+    const [templateRes, machineRes, answersRes, operatorRes] = await Promise.all([
       supabase.from("checklist_templates").select("*").eq("id", run.template_id).single(),
-      supabase.from("machines").select("id, name").eq("id", run.machine_id).single(),
+      supabase.from("machines").select("*").eq("id", run.machine_id).single(),
       supabase.from("checklist_answers").select("*").eq("run_id", runId),
+      supabase.from("users").select("name").eq("id", run.user_id).single(),
     ]);
 
     return NextResponse.json({
@@ -45,6 +46,7 @@ export async function GET(request: Request) {
       template: templateRes.data ?? null,
       machine: machineRes.data ?? null,
       answers: answersRes.data ?? [],
+      operator: operatorRes.data ?? null,
     });
   } catch (err) {
     console.error("[/api/checklist-run] exception:", err);

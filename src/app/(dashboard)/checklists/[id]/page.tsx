@@ -2,7 +2,6 @@
 
 import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import type { ChecklistRun, ChecklistTemplate, Machine, ChecklistAnswer } from "@/types/database";
 import Link from "next/link";
 import { formatDateTime } from "@/lib/utils";
@@ -29,7 +28,6 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
   const [answers, setAnswers] = useState<ChecklistAnswer[]>([]);
   const [operator, setOperator] = useState<{ name: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = createClient();
 
   useEffect(() => {
     fetchData();
@@ -38,32 +36,40 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
 
   const fetchData = async () => {
     setIsLoading(true);
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(`/api/checklist-run?runId=${encodeURIComponent(resolvedParams.id)}`, {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-    const { data: runData } = await supabase
-      .from("checklist_runs")
-      .select("*")
-      .eq("id", resolvedParams.id)
-      .single();
+      if (!res.ok) {
+        router.push("/checklists");
+        return;
+      }
 
-    if (!runData) {
+      const { run: runData, template: templateData, machine: machineData, answers: answersData, operator: operatorData } =
+        await res.json();
+
+      if (!runData) {
+        router.push("/checklists");
+        return;
+      }
+
+      setRun(runData);
+      setTemplate(templateData);
+      setMachine(machineData);
+      setAnswers(answersData || []);
+      setOperator(operatorData);
+    } catch (err) {
+      console.error("[ChecklistDetail] load error:", err);
       router.push("/checklists");
       return;
+    } finally {
+      setIsLoading(false);
     }
-    setRun(runData);
-
-    const [templateRes, machineRes, answersRes, userRes] = await Promise.all([
-      supabase.from("checklist_templates").select("*").eq("id", runData.template_id).single(),
-      supabase.from("machines").select("*").eq("id", runData.machine_id).single(),
-      supabase.from("checklist_answers").select("*").eq("run_id", resolvedParams.id),
-      supabase.from("users").select("name").eq("id", runData.user_id).single(),
-    ]);
-
-    setTemplate(templateRes.data);
-    setMachine(machineRes.data);
-    setAnswers(answersRes.data || []);
-    setOperator(userRes.data);
-
-    setIsLoading(false);
   };
 
   const getAnswerForItem = (itemId: string) => {
