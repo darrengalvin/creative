@@ -148,7 +148,7 @@ export default function ChecklistRunPage({ params }: { params: Promise<{ id: str
     setIsLoading(false);
   };
 
-  const saveAnswer = async (sectionId: string, itemId: string, value: boolean | string | number, comment?: string, photoUrl?: string) => {
+  const saveAnswer = async (sectionId: string, itemId: string, value: boolean | string | number | null, comment?: string, photoUrl?: string) => {
     if (!run) return;
     setIsSaving(true);
 
@@ -157,7 +157,7 @@ export default function ChecklistRunPage({ params }: { params: Promise<{ id: str
       run_id: string;
       section_id: string;
       item_id: string;
-      value: boolean | string | number;
+      value: boolean | string | number | null;
       comment: string | null;
       photo_url: string | null;
       answered_at: string;
@@ -336,9 +336,17 @@ export default function ChecklistRunPage({ params }: { params: Promise<{ id: str
   const handleSaveComment = () => {
     if (!commentingItemId || !commentingSectionId) return;
     const existingAnswer = answers.get(commentingItemId);
-    if (existingAnswer) {
-      saveAnswer(commentingSectionId, commentingItemId, existingAnswer.value as boolean | string | number, commentText, existingAnswer.photo_url || undefined);
-    }
+    // Save the comment even when the item hasn't been answered yet. Previously
+    // this bailed out when there was no existing answer, so a comment added
+    // before ticking YES/NO/entering a value was silently discarded.
+    const currentValue = (existingAnswer?.value ?? null) as boolean | string | number | null;
+    saveAnswer(
+      commentingSectionId,
+      commentingItemId,
+      currentValue,
+      commentText,
+      existingAnswer?.photo_url || undefined
+    );
     setCommentingSectionId(null);
     setCommentingItemId(null);
     setCommentText("");
