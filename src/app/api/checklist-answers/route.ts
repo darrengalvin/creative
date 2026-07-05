@@ -42,44 +42,20 @@ export async function POST(request: Request) {
       answered_at: new Date().toISOString(),
     };
 
-    // Find an existing answer for this run + item so we update rather than
-    // create duplicates.
-    const { data: existing, error: existingError } = await supabase
+    // Upsert against the (run_id, item_id) unique constraint. This is atomic,
+    // so concurrent saves for the same item (e.g. the debounced auto-save and
+    // the onBlur save firing together) resolve to a single UPDATE instead of a
+    // duplicate INSERT. The previous select-then-insert approach raced and
+    // violated "checklist_answers_run_item_unique".
+    const { data: saved, error } = await supabase
       .from("checklist_answers")
-      .select("id")
-      .eq("run_id", runId)
-      .eq("item_id", itemId)
-      .maybeSingle();
+      .upsert(answerData, { onConflict: "run_id,item_id" })
+      .select()
+      .single();
 
-    if (existingError) {
-      console.error("[/api/checklist-answers] lookup error:", existingError);
-      return NextResponse.json({ error: existingError.message }, { status: 500 });
-    }
-
-    let saved;
-    if (existing?.id) {
-      const { data, error } = await supabase
-        .from("checklist_answers")
-        .update(answerData)
-        .eq("id", existing.id)
-        .select()
-        .single();
-      if (error) {
-        console.error("[/api/checklist-answers] update error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-      saved = data;
-    } else {
-      const { data, error } = await supabase
-        .from("checklist_answers")
-        .insert(answerData)
-        .select()
-        .single();
-      if (error) {
-        console.error("[/api/checklist-answers] insert error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-      saved = data;
+    if (error) {
+      console.error("[/api/checklist-answers] upsert error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ answer: saved });

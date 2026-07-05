@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, use } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/contexts/toast-context";
 import { CameraCapture } from "@/components/ui/camera-capture";
@@ -83,7 +82,6 @@ export default function ChecklistRunPage({ params }: { params: Promise<{ id: str
   const router = useRouter();
   const { user } = useAuth();
   const { showToast } = useToast();
-  const supabase = createClient();
 
   const [run, setRun] = useState<ChecklistRun | null>(null);
   const [template, setTemplate] = useState<ChecklistTemplate | null>(null);
@@ -117,35 +115,44 @@ export default function ChecklistRunPage({ params }: { params: Promise<{ id: str
   const fetchData = async () => {
     setIsLoading(true);
 
-    const { data: runData } = await supabase
-      .from("checklist_runs")
-      .select("*")
-      .eq("id", resolvedParams.id)
-      .single();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(`/api/checklist-run?runId=${encodeURIComponent(resolvedParams.id)}`, {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-    if (!runData || runData.status !== "in_progress") {
+      if (!res.ok) {
+        router.push(`/checklists/${resolvedParams.id}`);
+        return;
+      }
+
+      const { run: runData, template: templateData, machine: machineData, answers: answersData } =
+        await res.json();
+
+      if (!runData || runData.status !== "in_progress") {
+        router.push(`/checklists/${resolvedParams.id}`);
+        return;
+      }
+
+      setRun(runData);
+      setTemplate(templateData);
+      setMachine(machineData);
+
+      const answersMap = new Map<string, ChecklistAnswer>();
+      (answersData || []).forEach((a: ChecklistAnswer) => {
+        answersMap.set(a.item_id, a);
+      });
+      setAnswers(answersMap);
+    } catch (err) {
+      console.error("[ChecklistRun] Error loading run:", err);
       router.push(`/checklists/${resolvedParams.id}`);
       return;
+    } finally {
+      setIsLoading(false);
     }
-    setRun(runData);
-
-    const [templateRes, machineRes, answersRes] = await Promise.all([
-      supabase.from("checklist_templates").select("*").eq("id", runData.template_id).single(),
-      supabase.from("machines").select("id, name").eq("id", runData.machine_id).single(),
-      supabase.from("checklist_answers").select("*").eq("run_id", resolvedParams.id),
-    ]);
-
-    setTemplate(templateRes.data);
-    setMachine(machineRes.data);
-
-    // Build answers map
-    const answersMap = new Map<string, ChecklistAnswer>();
-    (answersRes.data || []).forEach((a: ChecklistAnswer) => {
-      answersMap.set(a.item_id, a);
-    });
-    setAnswers(answersMap);
-
-    setIsLoading(false);
   };
 
   const saveAnswer = async (sectionId: string, itemId: string, value: boolean | string | number | null, comment?: string, photoUrl?: string) => {
@@ -278,6 +285,14 @@ export default function ChecklistRunPage({ params }: { params: Promise<{ id: str
   // blur handler could close over a stale copy of the map, so the value the
   // user typed was silently dropped and never saved.
   const commitInputDraft = (sectionId: string, itemId: string, type: "text" | "numeric", explicitValue?: string) => {
+    // Cancel any pending debounced auto-save for this item so we don't fire
+    // two saves at once (which raced on the server).
+    const pending = autosaveTimers.current.get(itemId);
+    if (pending) {
+      clearTimeout(pending);
+      autosaveTimers.current.delete(itemId);
+    }
+
     const raw = explicitValue !== undefined ? explicitValue : inputDrafts.get(itemId);
     if (raw === undefined) return; // nothing typed since last save
 
