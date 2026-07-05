@@ -89,7 +89,39 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
         .replace(/"/g, "&quot;");
 
     const statusLabel = statusConfig[run.status]?.label || run.status;
+    const statusColors: Record<string, { bg: string; fg: string }> = {
+      completed: { bg: "#dcfce7", fg: "#166534" },
+      in_progress: { bg: "#fef3c7", fg: "#92400e" },
+      aborted: { bg: "#fee2e2", fg: "#991b1b" },
+    };
+    const statusColor = statusColors[run.status] || { bg: "#e2e8f0", fg: "#374151" };
     const pdfSections = template.json_definition?.sections || [];
+
+    // Inline styles on every element — html2canvas reads computed per-element
+    // styles, so inline styling survives rasterisation even though a <style>
+    // block in the isolated iframe does not.
+    const FONT = "-apple-system, 'Segoe UI', Arial, sans-serif";
+
+    const metaCell = (label: string, valueHtml: string) => `
+      <div style="min-width:130px;">
+        <div style="color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px;">${esc(label)}</div>
+        <div style="font-size:14px;font-weight:600;color:#111827;">${valueHtml}</div>
+      </div>`;
+
+    const metaCells = [
+      metaCell(
+        "Status",
+        `<span style="display:inline-block;padding:3px 12px;border-radius:9999px;background:${statusColor.bg};color:${statusColor.fg};font-weight:700;font-size:12px;">${esc(statusLabel)}</span>`
+      ),
+      metaCell("Operator", esc(operator?.name || "Unknown")),
+      metaCell("Started", esc(formatDateTime(run.started_at))),
+      run.completed_at ? metaCell("Completed", esc(formatDateTime(run.completed_at))) : "",
+      run.job_number ? metaCell("Job Number", esc(run.job_number)) : "",
+      metaCell("Inspection ID", esc(run.id.slice(0, 8).toUpperCase())),
+    ].join("");
+
+    const resultPill = (text: string, bg: string, fg: string) =>
+      `<span style="display:inline-block;padding:3px 10px;border-radius:9999px;background:${bg};color:${fg};font-weight:700;font-size:11px;white-space:nowrap;">${esc(text)}</span>`;
 
     const sectionsHtml = pdfSections
       .map((section) => {
@@ -98,38 +130,45 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
             const answer = answers.find((a) => a.item_id === item.id);
             const isPassed = answer?.value === true || answer?.value === "yes";
             const isFailed = answer?.value === false || answer?.value === "no";
-            let resultText = "Not answered";
-            let resultClass = "na";
+            let resultHtml = `<span style="color:#9ca3af;font-size:12px;">Not answered</span>`;
             if (answer) {
-              if (isPassed) { resultText = "Pass"; resultClass = "pass"; }
-              else if (isFailed) { resultText = "Fail"; resultClass = "fail"; }
-              else { resultText = esc(answer.value); resultClass = "value"; }
+              if (isPassed) resultHtml = resultPill("Pass", "#dcfce7", "#166534");
+              else if (isFailed) resultHtml = resultPill("Fail", "#fee2e2", "#991b1b");
+              else resultHtml = `<span style="color:#111827;font-weight:600;font-size:13px;">${esc(answer.value)}</span>`;
             }
             const commentHtml = answer?.comment
-              ? `<div class="comment"><strong>Note:</strong> ${esc(answer.comment)}</div>`
+              ? `<div style="margin-top:6px;padding:6px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;"><strong>Note:</strong> ${esc(answer.comment)}</div>`
               : "";
             const photoHtml = answer?.photo_url
-              ? `<div class="photo"><img src="${esc(answer.photo_url)}" alt="Attached photo" /></div>`
+              ? `<div style="margin-top:8px;"><img src="${esc(answer.photo_url)}" alt="Attached photo" style="max-width:240px;border:1px solid #e2e8f0;border-radius:6px;" /></div>`
               : "";
+            const criticalTag = item.critical
+              ? ` <span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:9999px;font-weight:700;vertical-align:middle;">CRITICAL</span>`
+              : "";
+            const rowBg = index % 2 === 0 ? "#ffffff" : "#f9fafb";
             return `
-              <tr>
-                <td class="num">${index + 1}</td>
-                <td class="label">
-                  ${esc(item.label || item.question)}${item.critical ? ' <span class="critical">CRITICAL</span>' : ""}
+              <tr style="background:${rowBg};">
+                <td style="padding:8px;border-bottom:1px solid #eef2f7;vertical-align:top;width:28px;text-align:center;color:#9ca3af;font-size:12px;">${index + 1}</td>
+                <td style="padding:8px;border-bottom:1px solid #eef2f7;vertical-align:top;font-size:13px;color:#111827;">
+                  ${esc(item.label || item.question)}${criticalTag}
                   ${commentHtml}
                   ${photoHtml}
                 </td>
-                <td class="result ${resultClass}">${resultText}</td>
+                <td style="padding:8px;border-bottom:1px solid #eef2f7;vertical-align:top;width:96px;text-align:center;">${resultHtml}</td>
               </tr>`;
           })
           .join("");
         return `
-          <div class="section">
-            <h2>${esc(section.title)}</h2>
-            ${section.description ? `<p class="section-desc">${esc(section.description)}</p>` : ""}
-            <table>
+          <div style="margin-bottom:22px;page-break-inside:avoid;">
+            <h2 style="font-size:15px;color:#0057A8;border-bottom:2px solid #e2e8f0;padding-bottom:6px;margin:0 0 10px 0;">${esc(section.title)}</h2>
+            ${section.description ? `<p style="color:#6b7280;font-size:12px;margin:0 0 10px 0;">${esc(section.description)}</p>` : ""}
+            <table style="width:100%;border-collapse:collapse;">
               <thead>
-                <tr><th class="num">#</th><th>Check</th><th class="result">Result</th></tr>
+                <tr>
+                  <th style="text-align:center;background:#f1f5f9;padding:7px 8px;border-bottom:2px solid #cbd5e1;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:#64748b;width:28px;">#</th>
+                  <th style="text-align:left;background:#f1f5f9;padding:7px 8px;border-bottom:2px solid #cbd5e1;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:#64748b;">Check</th>
+                  <th style="text-align:center;background:#f1f5f9;padding:7px 8px;border-bottom:2px solid #cbd5e1;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:#64748b;width:96px;">Result</th>
+                </tr>
               </thead>
               <tbody>${itemsHtml}</tbody>
             </table>
@@ -138,58 +177,28 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
       .join("");
 
     const notesHtml = run.notes
-      ? `<div class="section"><h2>Notes</h2><p>${esc(run.notes)}</p></div>`
+      ? `<div style="margin-bottom:22px;page-break-inside:avoid;">
+          <h2 style="font-size:15px;color:#0057A8;border-bottom:2px solid #e2e8f0;padding-bottom:6px;margin:0 0 10px 0;">Notes</h2>
+          <p style="font-size:13px;color:#374151;margin:0;">${esc(run.notes)}</p>
+        </div>`
       : "";
 
     const html = `<!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <title>${esc(template.name)} - ${esc(machine?.name || "")}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; color: #111827; margin: 32px; }
-    .header { border-bottom: 3px solid #0057A8; padding-bottom: 16px; margin-bottom: 24px; }
-    .header h1 { color: #0057A8; margin: 0 0 4px 0; font-size: 24px; }
-    .header .machine { color: #374151; font-size: 15px; margin: 0; }
-    .meta { display: flex; flex-wrap: wrap; gap: 24px; margin: 16px 0 24px 0; font-size: 13px; }
-    .meta div span { display: block; color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-    .meta div strong { font-size: 14px; }
-    .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; background: #dcfce7; color: #166534; font-weight: 600; font-size: 12px; }
-    .section { margin-bottom: 24px; page-break-inside: avoid; }
-    .section h2 { font-size: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 8px; }
-    .section-desc { color: #6b7280; font-size: 13px; margin: 0 0 8px 0; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; background: #f8fafc; padding: 8px; border-bottom: 2px solid #e2e8f0; font-size: 11px; text-transform: uppercase; color: #6b7280; }
-    td { padding: 8px; border-bottom: 1px solid #eef2f7; vertical-align: top; }
-    td.num, th.num { width: 32px; text-align: center; color: #6b7280; }
-    td.result, th.result { width: 90px; text-align: center; font-weight: 600; }
-    td.result.pass { color: #166534; }
-    td.result.fail { color: #991b1b; }
-    td.result.na { color: #9ca3af; font-weight: 400; }
-    .critical { font-size: 10px; background: #fef3c7; color: #92400e; padding: 1px 6px; border-radius: 9999px; font-weight: 600; }
-    .comment { margin-top: 6px; padding: 6px 10px; background: #fffbeb; border: 1px solid #fef3c7; border-radius: 6px; font-size: 12px; color: #92400e; }
-    .photo img { max-width: 240px; margin-top: 8px; border: 1px solid #e2e8f0; border-radius: 6px; }
-    .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0; color: #9ca3af; font-size: 11px; }
-    @media print { body { margin: 12mm; } }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>${esc(template.name)}</h1>
-    <p class="machine">${esc(machine?.name || "")}</p>
+<head><meta charset="utf-8" /><title>${esc(template.name)} - ${esc(machine?.name || "")}</title></head>
+<body style="margin:0;background:#ffffff;">
+  <div id="pdf-root" style="font-family:${FONT};color:#111827;width:760px;padding:32px;background:#ffffff;">
+    <div style="border-bottom:3px solid #0057A8;padding-bottom:14px;margin-bottom:18px;">
+      <h1 style="color:#0057A8;margin:0 0 4px 0;font-size:24px;font-weight:800;">${esc(template.name)}</h1>
+      <p style="color:#475569;font-size:15px;margin:0;">${esc(machine?.name || "")}</p>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:20px 32px;margin-bottom:24px;">
+      ${metaCells}
+    </div>
+    ${sectionsHtml}
+    ${notesHtml}
+    <div style="margin-top:28px;padding-top:12px;border-top:1px solid #e2e8f0;color:#9ca3af;font-size:11px;">Generated ${esc(formatDateTime(new Date().toISOString()))} &bull; Creative Composites Machine Checklist System</div>
   </div>
-  <div class="meta">
-    <div><span>Status</span><span class="badge">${esc(statusLabel)}</span></div>
-    <div><span>Operator</span><strong>${esc(operator?.name || "Unknown")}</strong></div>
-    <div><span>Started</span><strong>${esc(formatDateTime(run.started_at))}</strong></div>
-    ${run.completed_at ? `<div><span>Completed</span><strong>${esc(formatDateTime(run.completed_at))}</strong></div>` : ""}
-    ${run.job_number ? `<div><span>Job Number</span><strong>${esc(run.job_number)}</strong></div>` : ""}
-    <div><span>Inspection ID</span><strong>${esc(run.id.slice(0, 8).toUpperCase())}</strong></div>
-  </div>
-  ${sectionsHtml}
-  ${notesHtml}
-  <div class="footer">Generated ${esc(formatDateTime(new Date().toISOString()))}</div>
 </body>
 </html>`;
 
@@ -243,16 +252,17 @@ export default function ChecklistDetailPage({ params }: { params: Promise<{ id: 
     try {
       await waitForImages();
       const { default: html2pdf } = await import("html2pdf.js");
+      const target = doc.getElementById("pdf-root") || doc.body;
       await html2pdf()
         .set({
           margin: [10, 10, 12, 10],
           filename,
-          image: { type: "jpeg", quality: 0.95 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 824 },
           jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["css", "legacy"], avoid: ".section" },
+          pagebreak: { mode: ["css", "legacy"] },
         })
-        .from(doc.body)
+        .from(target)
         .save();
     } catch (err) {
       console.error("[ChecklistDetail] PDF export failed:", err);
