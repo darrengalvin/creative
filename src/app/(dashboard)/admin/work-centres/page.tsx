@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/contexts/auth-context";
 import type { WorkCentre } from "@/types/database";
 
@@ -49,7 +48,6 @@ export default function AdminWorkCentresPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const supabase = createClient();
   const isAdmin = hasRole(["admin", "supervisor"]);
 
   useEffect(() => {
@@ -59,19 +57,17 @@ export default function AdminWorkCentresPage() {
 
   const fetchWorkCentres = async () => {
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from("work_centres")
-      .select("*, machines(count)")
-      .order("display_order");
-
-    if (!error && data) {
-      const withCounts = data.map((wc) => ({
-        ...wc,
-        machine_count: (wc.machines as unknown as { count: number }[])?.[0]?.count || 0,
-      }));
-      setWorkCentres(withCounts);
+    try {
+      const res = await fetch("/api/admin/work-centres", { credentials: "include" });
+      if (res.ok) {
+        const { workCentres: data } = await res.json();
+        setWorkCentres(data || []);
+      }
+    } catch (err) {
+      console.error("[AdminWorkCentres] load error:", err);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -79,34 +75,31 @@ export default function AdminWorkCentresPage() {
     setError("");
     setSuccess("");
 
-    if (editingId) {
-      const { error } = await supabase
-        .from("work_centres")
-        .update({ name: formData.name, description: formData.description || null })
-        .eq("id", editingId);
-
-      if (error) {
-        setError(error.message);
-      } else {
-        setSuccess("Work centre updated");
-        setShowModal(false);
-        setEditingId(null);
-        fetchWorkCentres();
-      }
-    } else {
-      const { error } = await supabase.from("work_centres").insert({
-        name: formData.name,
-        description: formData.description || null,
-        display_order: workCentres.length,
+    try {
+      const res = await fetch("/api/admin/work-centres", {
+        method: editingId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(
+          editingId
+            ? { id: editingId, name: formData.name, description: formData.description }
+            : { name: formData.name, description: formData.description, displayOrder: workCentres.length }
+        ),
       });
 
-      if (error) {
-        setError(error.message);
-      } else {
-        setSuccess("Work centre created");
-        setShowModal(false);
-        fetchWorkCentres();
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: "Something went wrong" }));
+        setError(msg || "Something went wrong");
+        return;
       }
+
+      setSuccess(editingId ? "Work centre updated" : "Work centre created");
+      setShowModal(false);
+      setEditingId(null);
+      fetchWorkCentres();
+    } catch {
+      setError("Something went wrong. Please try again.");
+      return;
     }
     setFormData({ name: "", description: "" });
   };
@@ -114,12 +107,20 @@ export default function AdminWorkCentresPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this work centre? Machines will be unassigned.")) return;
 
-    const { error } = await supabase.from("work_centres").delete().eq("id", id);
-    if (error) {
-      setError(error.message);
-    } else {
+    try {
+      const res = await fetch(`/api/admin/work-centres?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: "Couldn't delete" }));
+        setError(msg || "Couldn't delete");
+        return;
+      }
       setSuccess("Work centre deleted");
       fetchWorkCentres();
+    } catch {
+      setError("Something went wrong. Please try again.");
     }
   };
 

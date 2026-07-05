@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/contexts/auth-context";
 import Link from "next/link";
 import type { Machine, MachineStatus, RiskCategory, WorkCentre } from "@/types/database";
@@ -77,7 +76,6 @@ export default function AdminMachinesPage() {
     work_centre_id: "",
   });
 
-  const supabase = createClient();
   const isAdmin = hasRole(["admin", "supervisor"]);
 
   useEffect(() => {
@@ -87,16 +85,18 @@ export default function AdminMachinesPage() {
 
   const fetchData = async () => {
     setIsLoading(true);
-
-    const [machinesRes, wcRes] = await Promise.all([
-      supabase.from("machines").select("*, work_centres(id, name)").order("name"),
-      supabase.from("work_centres").select("*").order("display_order"),
-    ]);
-
-    if (machinesRes.data) setMachines(machinesRes.data);
-    if (wcRes.data) setWorkCentres(wcRes.data);
-
-    setIsLoading(false);
+    try {
+      const res = await fetch("/api/admin/machines", { credentials: "include" });
+      if (res.ok) {
+        const { machines: machineData, workCentres: wcData } = await res.json();
+        setMachines(machineData || []);
+        setWorkCentres(wcData || []);
+      }
+    } catch (err) {
+      console.error("[AdminMachines] load error:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -106,47 +106,56 @@ export default function AdminMachinesPage() {
 
     const payload = {
       name: formData.name,
-      manufacturer: formData.manufacturer || null,
-      model: formData.model || null,
-      serial_number: formData.serial_number || null,
-      location: formData.location || null,
-      description: formData.description || null,
+      manufacturer: formData.manufacturer,
+      model: formData.model,
+      serialNumber: formData.serial_number,
+      location: formData.location,
+      description: formData.description,
       status: formData.status,
-      risk_category: formData.risk_category,
-      work_centre_id: formData.work_centre_id || null,
+      riskCategory: formData.risk_category,
+      workCentreId: formData.work_centre_id,
     };
 
-    if (editingMachine) {
-      const { error } = await supabase.from("machines").update(payload).eq("id", editingMachine.id);
-      if (error) {
-        setError(error.message);
-      } else {
-        setSuccess("Machine updated");
-        setShowModal(false);
-        setEditingMachine(null);
-        fetchData();
+    try {
+      const res = await fetch("/api/admin/machines", {
+        method: editingMachine ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(editingMachine ? { id: editingMachine.id, ...payload } : payload),
+      });
+
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: "Something went wrong" }));
+        setError(msg || "Something went wrong");
+        return;
       }
-    } else {
-      const { error } = await supabase.from("machines").insert(payload);
-      if (error) {
-        setError(error.message);
-      } else {
-        setSuccess("Machine created");
-        setShowModal(false);
-        fetchData();
-      }
+
+      setSuccess(editingMachine ? "Machine updated" : "Machine created");
+      setShowModal(false);
+      setEditingMachine(null);
+      fetchData();
+    } catch {
+      setError("Something went wrong. Please try again.");
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this machine? This cannot be undone.")) return;
 
-    const { error } = await supabase.from("machines").delete().eq("id", id);
-    if (error) {
-      setError(error.message);
-    } else {
+    try {
+      const res = await fetch(`/api/admin/machines?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: "Couldn't delete" }));
+        setError(msg || "Couldn't delete");
+        return;
+      }
       setSuccess("Machine deleted");
       fetchData();
+    } catch {
+      setError("Something went wrong. Please try again.");
     }
   };
 

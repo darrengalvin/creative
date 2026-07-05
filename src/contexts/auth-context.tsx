@@ -163,7 +163,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // here, and because the browser client's getSession() can hang on its
         // auth lock, that await blocked releasing the UI until the 8s ceiling
         // on every page load. It must never gate the loading state.
-        if (mounted) setIsLoading(false);
+        if (mounted) {
+          clearTimeout(loadingCeiling);
+          setIsLoading(false);
+        }
 
         // Independently load the supabase session (for token-refresh tracking
         // and the .session field consumers expect), without blocking the UI.
